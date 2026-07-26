@@ -7,6 +7,8 @@ from payments.models import Payment
 from payments.events.event_envelope import EventEnvelope
 from payments.events.payment_events import PAYMENT_SUCCEEDED, PAYMENT_FAILED
 from payments.events.outbox_service import OutboxService
+from payments.events.audit.services import EventHistoryService
+from payments.events.audit.constants import AGGREGATE_PAYMENT, format_aggregate_id
 from payments.events.exceptions import (
     RetryableEventException,
     NonRetryableEventException,
@@ -80,6 +82,14 @@ def _publish_payment_succeeded(correlation_id, order_id, payment_id, transaction
         event_type=envelope.event_type,
         payload=envelope.to_dict(),
     )
+    EventHistoryService.record_published(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        correlation_id=correlation_id,
+        aggregate_type=AGGREGATE_PAYMENT,
+        aggregate_id=format_aggregate_id(AGGREGATE_PAYMENT, order_id),
+        payload=envelope.to_dict(),
+    )
 
 
 def _publish_payment_failed(correlation_id, order_id, payment_id, reason):
@@ -96,5 +106,13 @@ def _publish_payment_failed(correlation_id, order_id, payment_id, reason):
     OutboxService.create_event(
         event_id=envelope.event_id,
         event_type=envelope.event_type,
+        payload=envelope.to_dict(),
+    )
+    EventHistoryService.record_published(
+        event_id=envelope.event_id,
+        event_type=envelope.event_type,
+        correlation_id=correlation_id,
+        aggregate_type=AGGREGATE_PAYMENT,
+        aggregate_id=format_aggregate_id(AGGREGATE_PAYMENT, order_id),
         payload=envelope.to_dict(),
     )

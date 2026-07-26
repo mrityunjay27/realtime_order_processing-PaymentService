@@ -10,6 +10,8 @@ from payments.events.event_envelope import EventEnvelope
 from payments.events.idempotency import IdempotencyService
 from payments.events.payment_events import PAYMENT_REQUESTED, PAYMENT_REQUESTED_RETRY
 from payments.events.failure_handler import FailureHandler
+from payments.events.audit.services import EventHistoryService
+from payments.events.audit.constants import AGGREGATE_PAYMENT, format_aggregate_id
 from payments.services.payment_service import PaymentService
 
 
@@ -40,6 +42,9 @@ class KafkaEventConsumer:
             amount=event["amount"],
         )
 
+    def _extract_aggregate_id(self, envelope: EventEnvelope) -> str:
+        return envelope.payload.get("order_id") or "unknown"
+
     def start(self):
         self.consumer.subscribe([PAYMENT_REQUESTED, PAYMENT_REQUESTED_RETRY])
 
@@ -68,6 +73,16 @@ class KafkaEventConsumer:
                             self.handle_payment_requested(envelope)
                             IdempotencyService.mark_processed(envelope.event_id, envelope.event_type)
 
+                            aggregate_id = self._extract_aggregate_id(envelope)
+                            EventHistoryService.record_consumed(
+                                event_id=envelope.event_id,
+                                event_type=envelope.event_type,
+                                correlation_id=envelope.correlation_id,
+                                aggregate_type=AGGREGATE_PAYMENT,
+                                aggregate_id=format_aggregate_id(AGGREGATE_PAYMENT, aggregate_id),
+                                payload=envelope.to_dict(),
+                            )
+
                         else:
                             logger.warning("No handler for event_type %s", envelope.event_type)
 
@@ -81,6 +96,17 @@ class KafkaEventConsumer:
 
                 except Exception as exc:
                     self.consumer.commit(msg)
+
+                    aggregate_id = envelope.payload.get("order_id") or "unknown"
+                    EventHistoryService.record_consumed_failed(
+                        event_id=envelope.event_id,
+                        event_type=envelope.event_type,
+                        correlation_id=envelope.correlation_id,
+                        aggregate_type=AGGREGATE_PAYMENT,
+                        aggregate_id=format_aggregate_id(AGGREGATE_PAYMENT, aggregate_id),
+                        payload=envelope.to_dict(),
+                    )
+
                     self.failure_handler.handle(envelope_dict, exc)
 
         except KeyboardInterrupt:
