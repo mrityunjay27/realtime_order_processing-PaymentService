@@ -4,6 +4,8 @@ from confluent_kafka import Consumer, KafkaError
 from django.conf import settings
 from django.db import transaction, IntegrityError
 
+from core.logging import context as logging_context
+
 logger = logging.getLogger(__name__)
 
 from payments.events.event_envelope import EventEnvelope
@@ -34,7 +36,7 @@ class KafkaEventConsumer:
     def handle_payment_requested(self, envelope: EventEnvelope):
         event = envelope.payload
 
-        logger.info("Received event [%s]: %s", envelope.correlation_id, event)
+        logger.info("Payment request received for order %s", event["order_id"])
 
         PaymentService.process_payment(
             correlation_id=envelope.correlation_id,
@@ -63,6 +65,26 @@ class KafkaEventConsumer:
 
                 envelope = EventEnvelope.from_json(msg.value().decode("utf-8"))
                 envelope_dict = envelope.to_dict()
+
+                logging_context.set_context(
+                    correlation_id=envelope.correlation_id,
+                    event_id=envelope.event_id,
+                    event_type=envelope.event_type,
+                    kafka={
+                        "topic": msg.topic(),
+                        "partition": msg.partition(),
+                        "offset": msg.offset(),
+                    },
+                )
+
+                logger.info(
+                    "Kafka event received",
+                    extra={
+                        "topic": msg.topic(),
+                        "partition": msg.partition(),
+                        "offset": msg.offset(),
+                    },
+                )
 
                 try:
                     with transaction.atomic():
@@ -108,6 +130,9 @@ class KafkaEventConsumer:
                     )
 
                     self.failure_handler.handle(envelope_dict, exc)
+
+                finally:
+                    logging_context.clear_context()
 
         except KeyboardInterrupt:
             pass

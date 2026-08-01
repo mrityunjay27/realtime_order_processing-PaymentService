@@ -25,6 +25,8 @@ class PaymentService:
         import random
         import uuid
 
+        logger.info("Payment processing started for order %s", order_id)
+
         payment = Payment.objects.create(
             order_id=order_id,
             amount=amount,
